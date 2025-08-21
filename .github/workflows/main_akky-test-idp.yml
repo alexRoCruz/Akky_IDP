@@ -1,62 +1,75 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
+# Build & deploy JAR app to Azure Web App - akky-test-IDP
 
 name: Build and deploy JAR app to Azure Web App - akky-test-IDP
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: akky-test-IDP
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java version
-        uses: actions/setup-java@v1
+      - name: Set up Java
+        uses: actions/setup-java@v4
         with:
-          java-version: '11'
+          distribution: 'temurin'
+          java-version: '11'        # or '17' if your app uses it
+          cache: 'maven'            # speeds up builds
 
       - name: Build with Maven
-        run: mvn clean install
+        run: mvn -B -DskipTests package
 
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v3
+      - name: Upload artifact for deployment
+        uses: actions/upload-artifact@v4
         with:
           name: java-app
-          path: '${{ github.workspace }}/target/*.jar'
+          path: '**/target/*.jar'
+          if-no-files-found: error
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
     environment:
-      name: 'Production'
+      name: production
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
-    permissions:
-      id-token: write #This is required for requesting the JWT
-  
     steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v3
+      - name: Download artifact
+        uses: actions/download-artifact@v4
         with:
           name: java-app
-      
-      - name: Login to Azure
-        uses: azure/login@v1
+          path: .    # drop JAR(s) in workspace root
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_6DDD7DF6B9114C57BDB164F15534DDF5 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_AFDC7BE51B3549B5A61E7689F29EBC0A }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_F76B035840314093BEBA49F36FD4DE33 }}
 
+      - name: Pick JAR to deploy
+        id: pick
+        shell: bash
+        run: |
+          set -e
+          FILE=$(ls -1 *.jar | head -n 1)
+          echo "jar=$FILE" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
-        uses: azure/webapps-deploy@v2
+        uses: azure/webapps-deploy@v3
         with:
           app-name: 'akky-test-IDP'
-          slot-name: 'Production'
-          package: '*.jar'
-          
+          slot-name: 'production'             # default slot
+          package: ${{ steps.pick.outputs.jar }}
